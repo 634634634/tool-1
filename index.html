@@ -17,14 +17,14 @@
             --text-color-light: #fff;
             --bg-color: #f4f7f6;
             --border-color: #eee;
-            --holiday-color: #dc3545;
+            --holiday-color: #e57373;
             --saturday-color: #007bff;
             --font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif;
             
             /* イベントごとの色 */
             --event-shoyu-bg: #343a40;
             --event-miso-bg: #28a745;
-            --event-natto-bg: #dc3545;
+            --event-natto-bg: #e57373;
             --event-yasumi-bg: #8a63d2;
             --event-default-bg: #e9c46a;
         }
@@ -256,7 +256,6 @@
             color: var(--text-color-light);
         }
 
-        /* ★★★ 変更点: イベントの背景色指定をspanに限定 ★★★ */
         .events-list li.event-shoyu, .list-view-event-item > span.event-shoyu { background-color: var(--event-shoyu-bg); }
         .events-list li.event-miso, .list-view-event-item > span.event-miso { background-color: var(--event-miso-bg); }
         .events-list li.event-natto, .list-view-event-item > span.event-natto { background-color: var(--event-natto-bg); }
@@ -404,17 +403,15 @@
             padding-left: 15px;
             margin: 0;
         }
-        /* ★★★ 変更点: li自体のスタイルを調整 ★★★ */
         .list-view-event-item {
             padding: 0;
             font-size: 0.9em;
             margin-bottom: 3px;
         }
-        /* ★★★ 変更点: テキストを囲むspanのスタイルを追加 ★★★ */
         .list-view-event-item > span {
             padding: 4px 8px;
             border-radius: 3px;
-            display: inline-block; /* 背景色をテキスト幅に合わせる */
+            display: inline-block;
         }
 
         .list-view-no-events {
@@ -494,7 +491,6 @@
                 font-size: 13pt;
                 padding: 4px 0;
             }
-            /* ★★★ 変更点: 印刷時はspanのスタイルをリセット ★★★ */
             .list-view-event-item > span {
                 padding: 0;
                 border-radius: 0;
@@ -563,35 +559,38 @@
     <script>
     document.addEventListener('DOMContentLoaded', () => {
 
-        // --- 定数定義 ---
-        const SELECTORS = {
-            calendarContainer: '.calendar-container', monthYear: '#month-year', calendarBody: '#calendar-body',
-            prevMonthBtn: '#prev-month', nextMonthBtn: '#next-month', eventModal: '#event-modal',
-            modalCloseBtn: '.modal-close', eventDate: '#event-date', templateButtons: '#template-buttons',
-            modalEventsList: '#modal-events-list', newEventText: '#new-event-text', addEventForm: '#add-event-form',
-            dragModeToggle: '#drag-mode-toggle',
-            saveStatus: '#save-status',
-            listViewToggle: '#list-view-toggle',
-            calendarGridTable: '#calendar-grid-table',
-            listView: '#list-view',
-            editModeContainer: '.edit-mode-container',
-            printListBtn: '#print-list-btn',
-            printTitle: '#print-title',
-        };
-        const CLASSES = {
-            dragHandle: 'drag-handle', eventText: 'event-text', eventInput: 'event-input', deleteEvent: 'delete-event',
-            today: 'today', otherMonth: 'other-month', sunday: 'sunday', saturday: 'saturday', holiday: 'holiday',
-            holidayName: 'holiday-name', dragModeActive: 'drag-mode-active',
-        };
-        const EVENT_TEMPLATES = ["【醤油】", "【味噌】", "【納豆】", "【休み】"];
-        const API_URLS = {
-            GAS: 'https://script.google.com/macros/s/AKfycbwT0kajqjvz9XxV9t1-_o8r6bH3fDK1zOYDf2gC1bKcOmxNxFc3BquUfCibDE22vmjO/exec',
-            HOLIDAYS: 'https://holidays-jp.github.io/api/v1/date.json',
+        // --- 設定値 ---
+        const CONFIG = {
+            EVENT_TEMPLATES: ["【醤油】", "【味噌】", "【納豆】", "【休み】"],
+            API_URLS: {
+                GAS: 'https://script.google.com/macros/s/AKfycbwT0kajqjvz9XxV9t1-_o8r6bH3fDK1zOYDf2gC1bKcOmxNxFc3BquUfCibDE22vmjO/exec',
+                HOLIDAYS: 'https://holidays-jp.github.io/api/v1/date.json',
+            },
+            SWIPE_THRESHOLD: 50,
+            SAVE_DEBOUNCE_MS: 1500,
         };
 
-        /**
-         * APIとの通信を担当するクラス
-         */
+        // --- DOM要素の管理 ---
+        class DOMManager {
+            constructor() {
+                this.selectors = {
+                    calendarContainer: '.calendar-container', monthYear: '#month-year', calendarBody: '#calendar-body',
+                    prevMonthBtn: '#prev-month', nextMonthBtn: '#next-month', eventModal: '#event-modal',
+                    modalCloseBtn: '.modal-close', eventDate: '#event-date', templateButtons: '#template-buttons',
+                    modalEventsList: '#modal-events-list', newEventText: '#new-event-text', addEventForm: '#add-event-form',
+                    dragModeToggle: '#drag-mode-toggle', saveStatus: '#save-status', listViewToggle: '#list-view-toggle',
+                    calendarGridTable: '#calendar-grid-table', listView: '#list-view', editModeContainer: '.edit-mode-container',
+                    printListBtn: '#print-list-btn', printTitle: '#print-title',
+                };
+                this.elements = {};
+                for (const key in this.selectors) {
+                    this.elements[key] = document.querySelector(this.selectors[key]);
+                }
+            }
+            get(key) { return this.elements[key]; }
+        }
+
+        // --- API通信 ---
         class ApiService {
             async _fetchJSON(url, options = {}) {
                 try {
@@ -603,215 +602,70 @@
                     throw error;
                 }
             }
-
             fetchEvents() {
-                return this._fetchJSON(API_URLS.GAS).catch(() => {
+                return this._fetchJSON(CONFIG.API_URLS.GAS).catch(() => {
                     alert('データの読み込みに失敗しました。GASのデプロイ設定を確認してください。');
                     return {};
                 });
             }
-
             saveEvents(events) {
-                return new Promise((resolve, reject) => {
-                    fetch(API_URLS.GAS, {
-                        method: 'POST',
-                        mode: 'no-cors',
-                        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                        body: JSON.stringify({ events }),
-                    })
-                    .then(() => {
-                        resolve();
-                    })
-                    .catch(error => {
-                        console.error('Error saving events:', error);
-                        alert('データの保存中にエラーが発生しました。');
-                        reject(error);
-                    });
+                return fetch(CONFIG.API_URLS.GAS, {
+                    method: 'POST', mode: 'no-cors', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                    body: JSON.stringify({ events }),
+                }).catch(error => {
+                    console.error('Error saving events:', error);
+                    alert('データの保存中にエラーが発生しました。');
+                    throw error;
                 });
             }
+            fetchHolidays() { return this._fetchJSON(CONFIG.API_URLS.HOLIDAYS).catch(() => ({})); }
+        }
 
-            fetchHolidays() {
-                return this._fetchJSON(API_URLS.HOLIDAYS).catch(() => ({}));
+        // --- アプリケーションの状態管理 ---
+        class UIState {
+            constructor() {
+                this.events = {};
+                this.holidays = {};
+                // ★★★ 変更点: 日付管理をカレンダーとリストで分離 ★★★
+                this.calendarDate = new Date();
+                this.listDate = new Date();
+                this.selectedDate = null;
+                this.isDragModeEnabled = false;
+                this.isListViewEnabled = false;
             }
         }
 
-        /**
-         * メインアプリケーションクラス
-         */
-        class CalendarApp {
-            constructor() {
-                this.api = new ApiService();
-                this.elements = this._getDOMElements();
-                this.state = {
-                    events: {},
-                    holidays: {},
-                    currentDate: new Date(),
-                    selectedDate: null,
-                    isDragModeEnabled: false,
-                    isListViewEnabled: false, 
-                };
-                this.modalSortable = null;
-                this.calendarSortableInstances = [];
-                this.saveTimeout = null;
-                this.statusClearTimeout = null;
-                this.touchStartX = 0;
-                this.touchEndX = 0;
+        // --- UIの描画担当 ---
+        class ViewRenderer {
+            constructor(dom, state) {
+                this.dom = dom;
+                this.state = state;
             }
 
-            _getDOMElements() {
-                const elements = {};
-                for (const key in SELECTORS) {
-                    elements[key] = document.querySelector(SELECTORS[key]);
-                }
-                return elements;
-            }
-
-            async init() {
-                const [events, holidays] = await Promise.all([
-                    this.api.fetchEvents(),
-                    this.api.fetchHolidays()
-                ]);
-                this.state.events = events;
-                this.state.holidays = holidays;
-
-                this._render(); 
-                this._initializeModalSortable();
-                this._bindEventListeners();
-            }
-
-            _bindEventListeners() {
-                this.elements.prevMonthBtn.addEventListener('click', () => this._changePeriod(-1));
-                this.elements.nextMonthBtn.addEventListener('click', () => this._changePeriod(1));
-                this.elements.addEventForm.addEventListener('submit', e => {
-                    e.preventDefault();
-                    this.addEvent();
-                });
-                this.elements.modalCloseBtn.addEventListener('click', () => this.closeModal());
-                this.elements.eventModal.addEventListener('click', e => {
-                    if (e.target === this.elements.eventModal) this.closeModal();
-                });
-                
-                this.elements.calendarBody.addEventListener('click', e => {
-                    const cell = e.target.closest('td[data-date]');
-                    if (!cell) return;
-                    if (this.state.isDragModeEnabled && e.target.closest('li')) {
-                        return;
-                    }
-                    this.openModal(cell.dataset.date);
-                });
-                this.elements.dragModeToggle.addEventListener('click', () => this.toggleDragMode());
-                this.elements.listViewToggle.addEventListener('click', () => this.toggleViewMode());
-
-                this.elements.listView.addEventListener('click', e => {
-                    const dayItem = e.target.closest('.list-view-day-item[data-date]');
-                    if (dayItem) {
-                        this.openModal(dayItem.dataset.date);
-                    }
-                });
-
-                this.elements.listView.addEventListener('touchstart', e => this.touchStartX = e.changedTouches[0].screenX, false);
-                this.elements.listView.addEventListener('touchend', e => {
-                    this.touchEndX = e.changedTouches[0].screenX;
-                    this._handleSwipe();
-                }, false);
-
-                this.elements.printListBtn.addEventListener('click', () => {
-                    this._prepareForPrint();
-                    window.print();
-                });
-            }
-
-            _handleSwipe() {
-                const swipeThreshold = 50;
-                if (this.touchEndX < this.touchStartX - swipeThreshold) {
-                    this._changePeriod(1);
-                }
-                if (this.touchEndX > this.touchStartX + swipeThreshold) {
-                    this._changePeriod(-1);
-                }
-            }
-
-            // --- State & Rendering ---
-            _updateState(newState) {
-                Object.assign(this.state, newState);
-                this._render(); 
-                this._debouncedSave();
-            }
-
-            _setSaveStatus(status, message, autoClearDelay = null) {
-                const statusEl = this.elements.saveStatus;
-                clearTimeout(this.statusClearTimeout);
-                
-                statusEl.textContent = message;
-                statusEl.className = `is-visible is-${status}`;
-
-                if (autoClearDelay) {
-                    this.statusClearTimeout = setTimeout(() => {
-                        statusEl.className = '';
-                    }, autoClearDelay);
-                }
-            }
-
-            _debouncedSave() {
-                clearTimeout(this.saveTimeout);
-                this._setSaveStatus('saving', '保存中...');
-
-                this.saveTimeout = setTimeout(async () => {
-                    try {
-                        await this.api.saveEvents(this.state.events);
-                        this._setSaveStatus('saved', '✓ 保存済み', 2000);
-                    } catch (error) {
-                        this._setSaveStatus('error', '保存に失敗しました');
-                    }
-                }, 1500);
-            }
-
-            _changePeriod(direction) {
+            render() {
                 if (this.state.isListViewEnabled) {
-                    this.state.currentDate.setDate(this.state.currentDate.getDate() + (7 * direction));
+                    this.dom.get('calendarGridTable').style.display = 'none';
+                    this.dom.get('listView').style.display = 'block';
+                    this.dom.get('editModeContainer').style.display = 'none';
+                    this.dom.get('printListBtn').style.display = 'inline-block';
+                    this.renderListView();
                 } else {
-                    this.state.currentDate.setMonth(this.state.currentDate.getMonth() + direction);
+                    this.dom.get('calendarGridTable').style.display = 'table';
+                    this.dom.get('listView').style.display = 'none';
+                    this.dom.get('editModeContainer').style.display = 'block';
+                    this.dom.get('printListBtn').style.display = 'none';
+                    this.renderCalendar();
                 }
-                this._render(); 
+                this.dom.get('listViewToggle').textContent = this.state.isListViewEnabled ? 'カレンダー表示' : 'リスト表示';
             }
 
-            toggleDragMode() {
-                this.state.isDragModeEnabled = !this.state.isDragModeEnabled;
-                const { dragModeToggle, calendarContainer } = this.elements;
-                dragModeToggle.textContent = this.state.isDragModeEnabled ? 'レイアウト編集を終了' : 'レイアウト編集を開始';
-                dragModeToggle.classList.toggle('active', this.state.isDragModeEnabled);
-                calendarContainer.classList.toggle(CLASSES.dragModeActive, this.state.isDragModeEnabled);
-                this._render(); 
-            }
-
-            toggleViewMode() {
-                this.state.isListViewEnabled = !this.state.isListViewEnabled;
-                this._render();
-            }
-
-            _render() {
-                if (this.state.isListViewEnabled) {
-                    this.elements.calendarGridTable.style.display = 'none';
-                    this.elements.listView.style.display = 'block';
-                    this.elements.editModeContainer.style.display = 'none';
-                    this.elements.printListBtn.style.display = 'inline-block';
-                    this._renderListView();
-                } else {
-                    this.elements.calendarGridTable.style.display = 'table';
-                    this.elements.listView.style.display = 'none';
-                    this.elements.editModeContainer.style.display = 'block';
-                    this.elements.printListBtn.style.display = 'none';
-                    this._renderCalendar();
-                }
-                this.elements.listViewToggle.textContent = this.state.isListViewEnabled ? 'カレンダー表示' : 'リスト表示';
-            }
-
-            // --- Calendar Rendering ---
-            _renderCalendar() {
-                this.elements.calendarBody.innerHTML = '';
-                
-                const { year, month } = { year: this.state.currentDate.getFullYear(), month: this.state.currentDate.getMonth() };
-                this.elements.monthYear.textContent = `${year}年 ${month + 1}月`;
+            renderCalendar() {
+                const calendarBody = this.dom.get('calendarBody');
+                calendarBody.innerHTML = '';
+                // ★★★ 変更点: カレンダー用の日付を使用 ★★★
+                const date = this.state.calendarDate;
+                const { year, month } = { year: date.getFullYear(), month: date.getMonth() };
+                this.dom.get('monthYear').textContent = `${year}年 ${month + 1}月`;
 
                 const firstDayOfMonth = new Date(year, month, 1);
                 const currentDay = new Date(firstDayOfMonth);
@@ -819,285 +673,390 @@
 
                 for (let i = 0; i < 6; i++) {
                     if (i > 0 && currentDay.getMonth() > month && currentDay.getFullYear() >= year) break;
-                    const row = this.elements.calendarBody.insertRow();
-                    this._renderWeek(row, new Date(currentDay));
+                    const row = calendarBody.insertRow();
+                    this._renderCalendarWeek(row, new Date(currentDay));
                     currentDay.setDate(currentDay.getDate() + 7);
                 }
-                
-                if (this.state.isDragModeEnabled) this._initializeCalendarSortable();
-                else this._destroyCalendarSortable();
             }
 
-            _renderListView() {
-                const listContainer = this.elements.listView.querySelector('.list-view-events');
-                if (listContainer) {
-                    listContainer.remove();
-                }
-
-                const tempDate = new Date(this.state.currentDate);
-                const dayOfWeek = tempDate.getDay();
-                const diff = tempDate.getDate() - dayOfWeek + (dayOfWeek === 0 ? -6 : 1);
-                const monday = new Date(tempDate.setDate(diff));
-
-                const sunday = new Date(monday);
-                sunday.setDate(monday.getDate() + 6);
-                
-                const formatHeaderDate = (d) => {
-                    const year = d.getFullYear();
-                    const month = d.getMonth() + 1;
-                    const day = d.getDate();
-                    return { year, month, day };
-                };
-
-                const start = formatHeaderDate(monday);
-                const end = formatHeaderDate(sunday);
-
-                if (start.year !== end.year) {
-                    this.elements.monthYear.textContent = `${start.year}年${start.month}月${start.day}日 - ${end.year}年${end.month}月${end.day}日`;
-                } else if (start.month !== end.month) {
-                    this.elements.monthYear.textContent = `${start.year}年${start.month}月${start.day}日 - ${end.month}月${end.day}日`;
-                } else {
-                    this.elements.monthYear.textContent = `${start.year}年${start.month}月${start.day}日 - ${end.day}日`;
-                }
-
-                let listHtml = `<ul class="list-view-events">`;
-
-                for (let i = 0; i < 7; i++) {
-                    const date = new Date(monday);
-                    date.setDate(monday.getDate() + i);
-                    const dateStr = this._formatDate(date);
-                    const dayEvents = this.state.events[dateStr];
-                    const holidayName = this.state.holidays[dateStr];
-
-                    const hasEvents = dayEvents && dayEvents.length > 0;
-                    const liClass = `list-view-day-item ${!hasEvents ? 'has-no-events' : ''}`;
-
-                    listHtml += `<li class="${liClass.trim()}" data-date="${dateStr}">`;
-                    listHtml += `<div class="list-view-date-header">`;
-                    listHtml += `<strong>${date.getMonth() + 1}/${date.getDate()} (${['日', '月', '火', '水', '木', '金', '土'][date.getDay()]})</strong>`;
-                    if (holidayName) {
-                        listHtml += `<span class="list-view-holiday-name"> (${holidayName})</span>`;
-                    }
-                    listHtml += `</div>`;
-
-                    if (hasEvents) {
-                        listHtml += `<ul class="list-view-day-events">`;
-                        dayEvents.forEach(event => {
-                            const eventType = event.text.match(/【(.+?)】/);
-                            const typeClass = eventType ? `event-${eventType[1].toLowerCase()}` : 'event-default';
-                            const classMap = { 'event-醤油': 'event-shoyu', 'event-味噌': 'event-miso', 'event-納豆': 'event-natto', 'event-休み': 'event-yasumi' };
-                            const finalClass = classMap[typeClass] || 'event-default';
-                            // ★★★ 変更点: liの中にspanを生成してクラスを付与 ★★★
-                            listHtml += `<li class="list-view-event-item"><span class="${finalClass}">${event.text}</span></li>`;
-                        });
-                        listHtml += `</ul>`;
-                    } else {
-                        listHtml += `<p class="list-view-no-events">予定なし</p>`;
-                    }
-                    listHtml += `</li>`;
-                }
-
-                listHtml += `</ul>`;
-                this.elements.listView.insertAdjacentHTML('beforeend', listHtml);
-            }
-
-            _renderWeek(row, weekStartDate) {
+            _renderCalendarWeek(row, weekStartDate) {
                 for (let j = 0; j < 7; j++) {
                     const date = new Date(weekStartDate);
                     date.setDate(weekStartDate.getDate() + j);
                     const cell = row.insertCell();
-                    this._renderDayCell(cell, date, j);
-                    if (date.getMonth() !== this.state.currentDate.getMonth()) {
-                        cell.classList.add(CLASSES.otherMonth);
-                    }
+                    this._renderDayCell(cell, date);
                 }
             }
-            
-            _renderDayCell(cell, date, dayOfWeek) {
+
+            _renderDayCell(cell, date) {
                 const dateStr = this._formatDate(date);
                 cell.dataset.date = dateStr;
+                // ★★★ 変更点: カレンダー用の日付を使用 ★★★
+                if (date.getMonth() !== this.state.calendarDate.getMonth()) cell.classList.add('other-month');
+                if (dateStr === this._formatDate(new Date())) cell.classList.add('today');
 
-                const dayHeader = document.createElement('div');
-                dayHeader.className = 'day-header-container';
+                const dayOfWeek = date.getDay();
+                const dayNumberClasses = ['day-number'];
+                if (dayOfWeek === 0) dayNumberClasses.push('sunday');
+                if (dayOfWeek === 6) dayNumberClasses.push('saturday');
+                if (this.state.holidays[dateStr]) dayNumberClasses.push('holiday');
+
+                let holidayNameHtml = this.state.holidays[dateStr] ? `<div class="holiday-name">${this.state.holidays[dateStr]}</div>` : '';
                 
-                const dayNumber = document.createElement('div');
-                dayNumber.className = 'day-number';
-                dayNumber.textContent = date.getDate();
-                dayHeader.appendChild(dayNumber);
+                const eventsHtml = (this.state.events[dateStr] || []).map(event => this._createEventLi(event, 'calendar')).join('');
 
-                if (dayOfWeek === 0) dayNumber.classList.add(CLASSES.sunday);
-                if (dayOfWeek === 6) dayNumber.classList.add(CLASSES.saturday);
+                cell.innerHTML = `
+                    <div class="day-header-container">
+                        <div class="${dayNumberClasses.join(' ')}">${date.getDate()}</div>
+                        ${holidayNameHtml}
+                    </div>
+                    <ul class="events-list">${eventsHtml}</ul>
+                `;
+            }
 
-                if (this.state.holidays[dateStr]) {
-                    dayNumber.classList.add(CLASSES.holiday);
-                    const holidayName = document.createElement('div');
-                    holidayName.className = CLASSES.holidayName;
-                    holidayName.textContent = this.state.holidays[dateStr];
-                    dayHeader.appendChild(holidayName);
+            renderListView() {
+                const listContainer = this.dom.get('listView').querySelector('.list-view-events');
+                if (listContainer) listContainer.remove();
+
+                // ★★★ 変更点: リスト用の日付を使用 ★★★
+                const { monday, sunday } = this._getWeekRange(this.state.listDate);
+                this.dom.get('monthYear').textContent = this._getWeekHeader(monday, sunday);
+
+                const eventsHtml = Array.from({ length: 7 }, (_, i) => {
+                    const date = new Date(monday);
+                    date.setDate(monday.getDate() + i);
+                    return this._createListViewDayItem(date);
+                }).join('');
+
+                this.dom.get('listView').insertAdjacentHTML('beforeend', `<ul class="list-view-events">${eventsHtml}</ul>`);
+            }
+
+            _createListViewDayItem(date) {
+                const dateStr = this._formatDate(date);
+                const dayEvents = this.state.events[dateStr];
+                const holidayName = this.state.holidays[dateStr];
+                const hasEvents = dayEvents && dayEvents.length > 0;
+
+                const liClass = `list-view-day-item ${!hasEvents ? 'has-no-events' : ''}`;
+                const holidayHtml = holidayName ? `<span class="list-view-holiday-name"> (${holidayName})</span>` : '';
+                const dateHeaderHtml = `
+                    <div class="list-view-date-header">
+                        <strong>${date.getMonth() + 1}/${date.getDate()} (${['日', '月', '火', '水', '木', '金', '土'][date.getDay()]})</strong>
+                        ${holidayHtml}
+                    </div>`;
+
+                let eventsHtml;
+                if (hasEvents) {
+                    const items = dayEvents.map(event => {
+                        const eventClass = this._getEventClass(event.text);
+                        return `<li class="list-view-event-item"><span class="${eventClass}">${event.text}</span></li>`;
+                    }).join('');
+                    eventsHtml = `<ul class="list-view-day-events">${items}</ul>`;
+                } else {
+                    eventsHtml = `<p class="list-view-no-events">予定なし</p>`;
                 }
-                cell.appendChild(dayHeader);
 
-                if (dateStr === this._formatDate(new Date())) {
-                    cell.classList.add(CLASSES.today);
-                }
+                return `<li class="${liClass.trim()}" data-date="${dateStr}">${dateHeaderHtml}${eventsHtml}</li>`;
+            }
 
-                const eventsList = document.createElement('ul');
-                eventsList.className = 'events-list';
+            renderModal() {
+                const dateStr = this.state.selectedDate;
+                const holidayName = this.state.holidays[dateStr];
+                this.dom.get('eventDate').textContent = holidayName ? `${dateStr} (${holidayName})` : dateStr;
+
+                this.dom.get('templateButtons').innerHTML = CONFIG.EVENT_TEMPLATES.map(template => 
+                    `<button class="template-btn">${template}</button>`
+                ).join('');
+
                 const dayEvents = this.state.events[dateStr] || [];
-                dayEvents.forEach(event => eventsList.appendChild(this._createEventLi(event, 'calendar')));
-                cell.appendChild(eventsList);
+                if (dayEvents.length === 0) {
+                    this.dom.get('modalEventsList').innerHTML = '<li>予定はありません</li>';
+                } else {
+                    this.dom.get('modalEventsList').innerHTML = dayEvents.map(event => this._createEventLi(event, 'modal')).join('');
+                }
+                this.dom.get('eventModal').style.display = 'flex';
             }
 
             _createEventLi(event, context) {
-                const li = document.createElement('li');
-                li.dataset.eventId = event.id;
-
-                if (this.state.isDragModeEnabled || context === 'modal') {
-                    const handle = document.createElement('span');
-                    handle.className = CLASSES.dragHandle;
-                    handle.innerHTML = '&#9776;';
-                    li.appendChild(handle);
-                }
-
-                const textSpan = document.createElement('span');
-                textSpan.className = CLASSES.eventText;
-                textSpan.textContent = event.text;
-                li.appendChild(textSpan);
-
-                if (context === 'modal') {
-                    textSpan.addEventListener('click', () => this._switchToEditMode(li, textSpan, event));
-                    const deleteBtn = document.createElement('button');
-                    deleteBtn.className = CLASSES.deleteEvent;
-                    deleteBtn.textContent = '削除';
-                    deleteBtn.onclick = () => this.deleteEvent(event.id);
-                    li.appendChild(deleteBtn);
-                }
+                const eventClass = this._getEventClass(event.text);
+                let handleHtml = (this.state.isDragModeEnabled || context === 'modal') ? `<span class="drag-handle">&#9776;</span>` : '';
+                let deleteBtnHtml = (context === 'modal') ? `<button class="delete-event" data-event-id="${event.id}">削除</button>` : '';
                 
-                const eventType = event.text.match(/【(.+?)】/);
-                const typeClass = eventType ? `event-${eventType[1].toLowerCase()}` : 'event-default';
-                const classMap = { 'event-醤油': 'event-shoyu', 'event-味噌': 'event-miso', 'event-納豆': 'event-natto', 'event-休み': 'event-yasumi' };
-                li.classList.add(classMap[typeClass] || 'event-default');
-
-                return li;
+                return `
+                    <li data-event-id="${event.id}" class="${eventClass}">
+                        ${handleHtml}
+                        <span class="event-text">${event.text}</span>
+                        ${deleteBtnHtml}
+                    </li>`;
             }
 
-            // --- Modal ---
+            _getEventClass(text) {
+                const eventType = text.match(/【(.+?)】/);
+                const typeClass = eventType ? `event-${eventType[1].toLowerCase()}` : 'event-default';
+                const classMap = { 'event-醤油': 'event-shoyu', 'event-味噌': 'event-miso', 'event-納豆': 'event-natto', 'event-休み': 'event-yasumi' };
+                return classMap[typeClass] || 'event-default';
+            }
+
+            _getWeekRange(date) {
+                const tempDate = new Date(date);
+                const dayOfWeek = tempDate.getDay();
+                const diff = tempDate.getDate() - dayOfWeek + (dayOfWeek === 0 ? -6 : 1);
+                const monday = new Date(tempDate.setDate(diff));
+                const sunday = new Date(monday);
+                sunday.setDate(monday.getDate() + 6);
+                return { monday, sunday };
+            }
+
+            _getWeekHeader(start, end) {
+                const f = (d) => ({ y: d.getFullYear(), m: d.getMonth() + 1, d: d.getDate() });
+                const startDate = f(start);
+                const endDate = f(end);
+                if (startDate.y !== endDate.y) return `${startDate.y}年${startDate.m}月${startDate.d}日 - ${endDate.y}年${endDate.m}月${endDate.d}日`;
+                if (startDate.m !== endDate.m) return `${startDate.y}年${startDate.m}月${startDate.d}日 - ${endDate.m}月${endDate.d}日`;
+                return `${startDate.y}年${startDate.m}月${startDate.d}日 - ${endDate.d}日`;
+            }
+
+            prepareForPrint() {
+                // ★★★ 変更点: リスト用の日付を使用 ★★★
+                const { monday, sunday } = this._getWeekRange(this.state.listDate);
+                const titleText = this._getWeekHeader(monday, sunday);
+                this.dom.get('printTitle').textContent = `週間予定 (${titleText})`;
+            }
+
+            _formatDate(date, separator = '-') {
+                return `${date.getFullYear()}${separator}${String(date.getMonth() + 1).padStart(2, '0')}${separator}${String(date.getDate()).padStart(2, '0')}`;
+            }
+        }
+
+        // --- アプリケーションのコントローラー ---
+        class AppController {
+            constructor() {
+                this.dom = new DOMManager();
+                this.api = new ApiService();
+                this.state = new UIState();
+                this.renderer = new ViewRenderer(this.dom, this.state);
+                
+                this.saveTimeout = null;
+                this.statusClearTimeout = null;
+                this.touchStartX = 0;
+                this.touchEndX = 0;
+                this.modalSortable = null;
+                this.calendarSortableInstances = [];
+            }
+
+            async init() {
+                const [events, holidays] = await Promise.all([this.api.fetchEvents(), this.api.fetchHolidays()]);
+                this.state.events = events;
+                this.state.holidays = holidays;
+                // ★★★ 変更点: リスト表示用日付を初期化 ★★★
+                this.state.listDate = new Date(this.state.calendarDate);
+                this.renderer.render();
+                this._bindEventListeners();
+                this._initializeModalSortable();
+            }
+
+            _bindEventListeners() {
+                this.dom.get('prevMonthBtn').addEventListener('click', () => this.changePeriod(-1));
+                this.dom.get('nextMonthBtn').addEventListener('click', () => this.changePeriod(1));
+                this.dom.get('listViewToggle').addEventListener('click', () => this.toggleViewMode());
+                this.dom.get('dragModeToggle').addEventListener('click', () => this.toggleDragMode());
+                this.dom.get('printListBtn').addEventListener('click', () => this.printList());
+
+                this.dom.get('calendarBody').addEventListener('click', e => {
+                    const cell = e.target.closest('td[data-date]');
+                    if (cell && !(this.state.isDragModeEnabled && e.target.closest('li'))) {
+                        this.openModal(cell.dataset.date);
+                    }
+                });
+
+                this.dom.get('listView').addEventListener('click', e => {
+                    const dayItem = e.target.closest('.list-view-day-item[data-date]');
+                    if (dayItem) this.openModal(dayItem.dataset.date);
+                });
+
+                this.dom.get('listView').addEventListener('touchstart', e => this.touchStartX = e.changedTouches[0].screenX, false);
+                this.dom.get('listView').addEventListener('touchend', e => {
+                    this.touchEndX = e.changedTouches[0].screenX;
+                    if (Math.abs(this.touchStartX - this.touchEndX) > CONFIG.SWIPE_THRESHOLD) {
+                        this.changePeriod(this.touchEndX < this.touchStartX ? 1 : -1);
+                    }
+                }, false);
+
+                this._bindModalEventListeners();
+            }
+
+            _bindModalEventListeners() {
+                this.dom.get('eventModal').addEventListener('click', e => {
+                    if (e.target === this.dom.get('eventModal') || e.target.classList.contains('modal-close')) {
+                        this.closeModal();
+                    }
+                });
+                this.dom.get('addEventForm').addEventListener('submit', e => {
+                    e.preventDefault();
+                    this.addEvent(this.dom.get('newEventText').value);
+                });
+                this.dom.get('templateButtons').addEventListener('click', e => {
+                    if (e.target.classList.contains('template-btn')) {
+                        this.addEvent(e.target.textContent);
+                    }
+                });
+                this.dom.get('modalEventsList').addEventListener('click', e => {
+                    if (e.target.classList.contains('delete-event')) {
+                        this.deleteEvent(e.target.dataset.eventId);
+                    } else if (e.target.classList.contains('event-text')) {
+                        this._switchToEditMode(e.target);
+                    }
+                });
+            }
+
+            _updateDataAndRender(updateFn) {
+                if (updateFn) updateFn();
+                this.renderer.render();
+                this._debouncedSave();
+            }
+            
+            _renderOnly(updateFn) {
+                if (updateFn) updateFn();
+                this.renderer.render();
+            }
+
+            changePeriod(direction) {
+                this._renderOnly(() => {
+                    // ★★★ 変更点: 表示モードに応じて更新する日付を変更 ★★★
+                    if (this.state.isListViewEnabled) {
+                        this.state.listDate.setDate(this.state.listDate.getDate() + (7 * direction));
+                    } else {
+                        this.state.calendarDate.setMonth(this.state.calendarDate.getMonth() + direction);
+                    }
+                });
+            }
+
+            toggleViewMode() {
+                if (this.state.isDragModeEnabled) {
+                    this.toggleDragMode(); 
+                }
+                this._renderOnly(() => {
+                    // ★★★ 変更点: カレンダーからリストへ移る際に日付を同期 ★★★
+                    if (!this.state.isListViewEnabled) {
+                        this.state.listDate = new Date(this.state.calendarDate);
+                    }
+                    this.state.isListViewEnabled = !this.state.isListViewEnabled;
+                });
+            }
+
+            toggleDragMode() {
+                this.state.isDragModeEnabled = !this.state.isDragModeEnabled;
+                const btn = this.dom.get('dragModeToggle');
+                btn.textContent = this.state.isDragModeEnabled ? 'レイアウト編集を終了' : 'レイアウト編集を開始';
+                btn.classList.toggle('active', this.state.isDragModeEnabled);
+                this.dom.get('calendarContainer').classList.toggle('drag-mode-active', this.state.isDragModeEnabled);
+                this.renderer.render();
+                if (this.state.isDragModeEnabled) this._initializeCalendarSortable();
+                else this._destroyCalendarSortable();
+            }
+
+            printList() {
+                this.renderer.prepareForPrint();
+                window.print();
+            }
+
             openModal(dateStr) {
                 this.state.selectedDate = dateStr;
-                const holidayName = this.state.holidays[dateStr];
-                this.elements.eventDate.textContent = holidayName ? `${dateStr} (${holidayName})` : dateStr;
-
-                this._renderTemplateButtons();
-                this._renderModalEventsList();
-                this.elements.eventModal.style.display = 'flex';
+                this.renderer.renderModal();
             }
 
             closeModal() {
-                this.elements.eventModal.style.display = 'none';
+                this.dom.get('eventModal').style.display = 'none';
             }
 
-            _renderTemplateButtons() {
-                this.elements.templateButtons.innerHTML = '';
-                EVENT_TEMPLATES.forEach(template => {
-                    const btn = document.createElement('button');
-                    btn.className = 'template-btn';
-                    btn.textContent = template;
-                    btn.onclick = () => this.addEvent(template);
-                    this.elements.templateButtons.appendChild(btn);
+            addEvent(text) {
+                const trimmedText = text.trim();
+                if (!trimmedText || !this.state.selectedDate) return;
+                this._updateDataAndRender(() => {
+                    const newEvent = { id: crypto.randomUUID(), text: trimmedText };
+                    if (!this.state.events[this.state.selectedDate]) this.state.events[this.state.selectedDate] = [];
+                    this.state.events[this.state.selectedDate].push(newEvent);
                 });
-            }
-
-            _renderModalEventsList() {
-                this.elements.modalEventsList.innerHTML = '';
-                const dayEvents = this.state.events[this.state.selectedDate] || [];
-                if (dayEvents.length === 0) {
-                    this.elements.modalEventsList.innerHTML = '<li>予定はありません</li>';
-                    return;
-                }
-                dayEvents.forEach(event => {
-                    this.elements.modalEventsList.appendChild(this._createEventLi(event, 'modal'));
-                });
-            }
-
-            // --- Event Actions ---
-            addEvent(presetText = null) {
-                const text = presetText || this.elements.newEventText.value.trim();
-                if (!text || !this.state.selectedDate) return;
-
-                const newEvent = { id: crypto.randomUUID(), text };
-                const newEvents = { ...this.state.events };
-                if (!newEvents[this.state.selectedDate]) {
-                    newEvents[this.state.selectedDate] = [];
-                }
-                newEvents[this.state.selectedDate].push(newEvent);
-                
-                this.elements.newEventText.value = '';
-                this.state.events = newEvents;
-                this._renderModalEventsList();
-                this._updateState({});
+                this.dom.get('newEventText').value = '';
+                this.renderer.renderModal();
             }
 
             deleteEvent(eventId) {
                 const { selectedDate, events } = this.state;
                 if (!selectedDate || !events[selectedDate]) return;
-
-                events[selectedDate] = events[selectedDate].filter(event => event.id !== eventId);
-                if (events[selectedDate].length === 0) {
-                    delete events[selectedDate];
-                }
-                this._renderModalEventsList();
-                this._updateState({});
+                this._updateDataAndRender(() => {
+                    events[selectedDate] = events[selectedDate].filter(event => event.id !== eventId);
+                    if (events[selectedDate].length === 0) delete events[selectedDate];
+                });
+                this.renderer.renderModal();
             }
 
             editEvent(eventId, newText) {
                 const { selectedDate, events } = this.state;
                 const eventToEdit = events[selectedDate]?.find(event => event.id === eventId);
                 if (eventToEdit) {
-                    eventToEdit.text = newText.trim();
-                    this._renderModalEventsList();
-                    this._updateState({});
+                    this._updateDataAndRender(() => eventToEdit.text = newText.trim());
                 }
+                this.renderer.renderModal();
             }
 
-            _switchToEditMode(li, textSpan, event) {
+            _switchToEditMode(textSpan) {
+                const li = textSpan.parentElement;
+                const eventId = li.dataset.eventId;
                 const input = document.createElement('input');
                 input.type = 'text';
-                input.className = CLASSES.eventInput;
+                input.className = 'event-input';
                 input.value = textSpan.textContent;
-
                 li.insertBefore(input, textSpan);
                 li.removeChild(textSpan);
                 input.focus();
-
-                const saveChanges = () => {
-                    this.editEvent(event.id, input.value);
-                };
-                input.addEventListener('blur', saveChanges, { once: true });
+                const save = () => this.editEvent(eventId, input.value);
+                input.addEventListener('blur', save, { once: true });
                 input.addEventListener('keypress', e => { if (e.key === 'Enter') input.blur(); });
             }
 
-            // --- SortableJS ---
+            _setSaveStatus(status, message, autoClearDelay = null) {
+                const statusEl = this.dom.get('saveStatus');
+                clearTimeout(this.statusClearTimeout);
+                statusEl.textContent = message;
+                statusEl.className = `is-visible is-${status}`;
+                if (autoClearDelay) {
+                    this.statusClearTimeout = setTimeout(() => statusEl.className = '', autoClearDelay);
+                }
+            }
+
+            _debouncedSave() {
+                clearTimeout(this.saveTimeout);
+                this._setSaveStatus('saving', '保存中...');
+                this.saveTimeout = setTimeout(async () => {
+                    try {
+                        await this.api.saveEvents(this.state.events);
+                        this._setSaveStatus('saved', '✓ 保存済み', 2000);
+                    } catch (error) {
+                        this._setSaveStatus('error', '保存に失敗しました');
+                    }
+                }, CONFIG.SAVE_DEBOUNCE_MS);
+            }
+
             _initializeCalendarSortable() {
                 this._destroyCalendarSortable();
-                this.elements.calendarBody.querySelectorAll('.events-list').forEach(list => {
+                this.dom.get('calendarBody').querySelectorAll('.events-list').forEach(list => {
                     const sortable = new Sortable(list, {
-                        group: 'shared-events', animation: 150, handle: `.${CLASSES.dragHandle}`,
+                        group: 'shared-events', animation: 150, handle: '.drag-handle',
                         onEnd: evt => {
                             const { from, to, oldIndex, newIndex, item } = evt;
                             const eventId = item.dataset.eventId;
                             const oldDate = from.closest('td').dataset.date;
                             const newDate = to.closest('td').dataset.date;
-                            
-                            const eventText = item.querySelector(`.${CLASSES.eventText}`).textContent;
+                            const eventText = item.querySelector('.event-text').textContent;
                             const movedEvent = { id: eventId, text: eventText };
 
-                            this.state.events[oldDate] = this.state.events[oldDate].filter(e => e.id !== eventId);
-                            if (this.state.events[oldDate].length === 0) delete this.state.events[oldDate];
-
-                            if (!this.state.events[newDate]) this.state.events[newDate] = [];
-                            this.state.events[newDate].splice(newIndex, 0, movedEvent);
-
-                            this._updateState({});
+                            this._updateDataAndRender(() => {
+                                this.state.events[oldDate] = this.state.events[oldDate].filter(e => e.id !== eventId);
+                                if (this.state.events[oldDate].length === 0) delete this.state.events[oldDate];
+                                if (!this.state.events[newDate]) this.state.events[newDate] = [];
+                                this.state.events[newDate].splice(newIndex, 0, movedEvent);
+                            });
                         }
                     });
                     this.calendarSortableInstances.push(sortable);
@@ -1111,63 +1070,22 @@
 
             _initializeModalSortable() {
                 if (this.modalSortable) this.modalSortable.destroy();
-                this.modalSortable = new Sortable(this.elements.modalEventsList, {
-                    animation: 150, handle: `.${CLASSES.dragHandle}`,
+                this.modalSortable = new Sortable(this.dom.get('modalEventsList'), {
+                    animation: 150, handle: '.drag-handle',
                     onEnd: evt => {
-                        const newArray = Array.from(evt.target.children).map(li => {
-                            const eventId = li.dataset.eventId;
-                            const textEl = li.querySelector(`.${CLASSES.eventText}`) || li.querySelector(`.${CLASSES.eventInput}`);
-                            const text = textEl.tagName === 'INPUT' ? textEl.value : textEl.textContent;
-                            return { id: eventId, text };
-                        });
-                        this.state.events[this.state.selectedDate] = newArray;
-                        this._updateState({});
+                        const newArray = Array.from(evt.target.children).map(li => ({
+                            id: li.dataset.eventId,
+                            text: (li.querySelector('.event-text') || li.querySelector('.event-input')).value || li.querySelector('.event-text').textContent
+                        }));
+                        this._updateDataAndRender(() => this.state.events[this.state.selectedDate] = newArray);
+                        this.renderer.renderModal();
                     }
                 });
-            }
-
-            // --- Print ---
-            _prepareForPrint() {
-                const tempDate = new Date(this.state.currentDate);
-                const dayOfWeek = tempDate.getDay();
-                const diff = tempDate.getDate() - dayOfWeek + (dayOfWeek === 0 ? -6 : 1);
-                const monday = new Date(tempDate.setDate(diff));
-                const sunday = new Date(monday);
-                sunday.setDate(monday.getDate() + 6);
-
-                const formatHeaderDate = (d) => {
-                    const year = d.getFullYear();
-                    const month = d.getMonth() + 1;
-                    const day = d.getDate();
-                    return { year, month, day };
-                };
-
-                const start = formatHeaderDate(monday);
-                const end = formatHeaderDate(sunday);
-                let titleText;
-
-                if (start.year !== end.year) {
-                    titleText = `${start.year}年${start.month}月${start.day}日 - ${end.year}年${end.month}月${end.day}日`;
-                } else if (start.month !== end.month) {
-                    titleText = `${start.year}年${start.month}月${start.day}日 - ${end.month}月${end.day}日`;
-                } else {
-                    titleText = `${start.year}年${start.month}月${start.day}日 - ${end.day}日`;
-                }
-
-                this.elements.printTitle.textContent = `週間予定 (${titleText})`;
-            }
-
-            // --- Utility ---
-            _formatDate(date, separator = '-') {
-                const y = date.getFullYear();
-                const m = String(date.getMonth() + 1).padStart(2, '0');
-                const d = String(date.getDate()).padStart(2, '0');
-                return `${y}${separator}${m}${separator}${d}`;
             }
         }
 
         // --- アプリケーションの起動 ---
-        const app = new CalendarApp();
+        const app = new AppController();
         app.init();
     });
     </script>
