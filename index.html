@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>共有予定カレンダー</title>
+    <title>製造予定カレンダー</title>
     <!-- SortableJSライブラリの読み込み -->
     <script src="https://cdn.jsdelivr.net/npm/sortablejs@latest/Sortable.min.js"></script>
     
@@ -340,7 +340,7 @@
             flex-grow: 1;
             cursor: pointer;
             padding: 5px;
-            min-width: 0; 
+            min-width: 0;
         }
         #modal-events-list .event-input {
             border: 1px solid var(--primary-color);
@@ -356,7 +356,7 @@
             padding: 4px 8px;
             font-size: 0.8em;
             margin-left: 10px;
-            flex-shrink: 0; 
+            flex-shrink: 0;
         }
 
         .add-event-form { display: flex; }
@@ -522,13 +522,13 @@
 
     <div class="calendar-container">
         <div class="calendar-header">
-            <button id="prev-month">&lt;</button>
+            <button id="prev-month"><</button>
             <div class="header-center">
                 <button id="print-list-btn" style="display: none;">印刷</button>
                 <h2 id="month-year"></h2>
                 <button id="list-view-toggle">リスト表示</button>
             </div>
-            <button id="next-month">&gt;</button>
+            <button id="next-month">></button>
         </div>
 
         <table class="calendar-grid" id="calendar-grid-table">
@@ -577,9 +577,11 @@
         const CONFIG = {
             EVENT_TEMPLATES: ["【醤油】", "【味噌】", "【納豆】", "【休み】"],
             API_URLS: {
-                GAS: 'https://script.google.com/macros/s/AKfycbwT0kajqjvz9XxV9t1-_o8r6bH3fDK1zOYDf2gC1bKcOmxNxFc3BquUfCibDE22vmjO/exec',
+                // ※ご自身のGASのURLに置き換えてください
+                GAS: 'https://script.google.com/macros/s/AKfycbzcSOhbNLNnxuLsgYaUOeiCj5UkGXrF_Z_Wzcio-zLrRKDEZFfE_553lsq3AFNyaphX/exec',
                 HOLIDAYS: 'https://holidays-jp.github.io/api/v1/date.json',
             },
+            SWIPE_THRESHOLD: 50,
             SAVE_DEBOUNCE_MS: 1500,
         };
 
@@ -603,7 +605,34 @@
             get(key) { return this.elements[key]; }
         }
 
-        // --- API通信 ---
+        // --- ユーティリティ (セキュリティと互換性) ---
+        const Utils = {
+            // XSS対策: HTMLエスケープ関数
+            escapeHtml: (str) => {
+                if (typeof str !== 'string') return str;
+                return str.replace(/[&<>"']/g, function(m) {
+                    return {
+                        '&': '&amp;',
+                        '<': '&lt;',
+                        '>': '&gt;',
+                        '"': '&quot;',
+                        "'": '&#039;'
+                    }[m];
+                });
+            },
+            // UUID生成 (crypto.randomUUID が使えない場合のフォールバック付き)
+            generateUUID: () => {
+                if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+                    return crypto.randomUUID();
+                }
+                return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+                    var r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
+                    return v.toString(16);
+                });
+            }
+        };
+
+        // --- API通信 (期間指定に対応) ---
         class ApiService {
             async _fetchJSON(url, options = {}) {
                 try {
@@ -615,12 +644,21 @@
                     throw error;
                 }
             }
-            fetchEvents() {
-                return this._fetchJSON(CONFIG.API_URLS.GAS).catch(() => {
+            
+            // start, end 引数を受け取り、URLパラメータに追加
+            fetchEvents(start = null, end = null) {
+                let url = CONFIG.API_URLS.GAS;
+                if (start && end) {
+                    const separator = url.includes('?') ? '&' : '?';
+                    url += `${separator}start=${start}&end=${end}`;
+                }
+                
+                return this._fetchJSON(url).catch(() => {
                     alert('データの読み込みに失敗しました。GASのデプロイ設定を確認してください。');
                     return {};
                 });
             }
+
             saveEvents(events) {
                 return fetch(CONFIG.API_URLS.GAS, {
                     method: 'POST', mode: 'no-cors', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
@@ -649,29 +687,26 @@
 
         // --- UIの描画担当 ---
         class ViewRenderer {
-            constructor(dom, state, callbacks) {
+            constructor(dom, state) {
                 this.dom = dom;
                 this.state = state;
-                this.callbacks = callbacks; // ★★★ 変更点: コールバックを受け取る
-            }
-
-            // ★★★ 変更点: ビューの表示/非表示を管理するメソッドを追加 ★★★
-            updateViewVisibility() {
-                const isList = this.state.isListViewEnabled;
-                this.dom.get('calendarGridTable').style.display = isList ? 'none' : 'table';
-                this.dom.get('listView').style.display = isList ? 'block' : 'none';
-                this.dom.get('editModeContainer').style.display = isList ? 'none' : 'block';
-                this.dom.get('printListBtn').style.display = isList ? 'inline-block' : 'none';
-                this.dom.get('listViewToggle').textContent = isList ? 'カレンダー表示' : 'リスト表示';
             }
 
             render() {
-                this.updateViewVisibility();
                 if (this.state.isListViewEnabled) {
+                    this.dom.get('calendarGridTable').style.display = 'none';
+                    this.dom.get('listView').style.display = 'block';
+                    this.dom.get('editModeContainer').style.display = 'none';
+                    this.dom.get('printListBtn').style.display = 'inline-block';
                     this.renderListView();
                 } else {
+                    this.dom.get('calendarGridTable').style.display = 'table';
+                    this.dom.get('listView').style.display = 'none';
+                    this.dom.get('editModeContainer').style.display = 'block';
+                    this.dom.get('printListBtn').style.display = 'none';
                     this.renderCalendar();
                 }
+                this.dom.get('listViewToggle').textContent = this.state.isListViewEnabled ? 'カレンダー表示' : 'リスト表示';
             }
 
             renderCalendar() {
@@ -685,8 +720,13 @@
                 const currentDay = new Date(firstDayOfMonth);
                 currentDay.setDate(1 - firstDayOfMonth.getDay());
 
+                // 翌月の1日を計算（ループ終了判定用）
+                const nextMonthFirstDay = new Date(year, month + 1, 1);
+
                 for (let i = 0; i < 6; i++) {
-                    if (i > 0 && currentDay.getMonth() > month && currentDay.getFullYear() >= year) break;
+                    // 修正: 日付オブジェクト同士で比較して、翌月に入ったらループを抜ける
+                    if (i > 0 && currentDay >= nextMonthFirstDay) break;
+
                     const row = calendarBody.insertRow();
                     this._renderCalendarWeek(row, new Date(currentDay));
                     currentDay.setDate(currentDay.getDate() + 7);
@@ -714,7 +754,7 @@
                 if (dayOfWeek === 6) dayNumberClasses.push('saturday');
                 if (this.state.holidays[dateStr]) dayNumberClasses.push('holiday');
 
-                let holidayNameHtml = this.state.holidays[dateStr] ? `<div class="holiday-name">${this.state.holidays[dateStr]}</div>` : '';
+                let holidayNameHtml = this.state.holidays[dateStr] ? `<div class="holiday-name">${Utils.escapeHtml(this.state.holidays[dateStr])}</div>` : '';
                 
                 const eventsHtml = (this.state.events[dateStr] || []).map(event => this._createEventLi(event, 'calendar')).join('');
 
@@ -750,7 +790,7 @@
                 const hasEvents = dayEvents && dayEvents.length > 0;
 
                 const liClass = `list-view-day-item ${!hasEvents ? 'has-no-events' : ''}`;
-                const holidayHtml = holidayName ? `<span class="list-view-holiday-name"> (${holidayName})</span>` : '';
+                const holidayHtml = holidayName ? `<span class="list-view-holiday-name"> (${Utils.escapeHtml(holidayName)})</span>` : '';
                 const dateHeaderHtml = `
                     <div class="list-view-date-header">
                         <strong>${date.getMonth() + 1}/${date.getDate()} (${['日', '月', '火', '水', '木', '金', '土'][date.getDay()]})</strong>
@@ -761,7 +801,8 @@
                 if (hasEvents) {
                     const items = dayEvents.map(event => {
                         const eventClass = this._getEventClass(event.text);
-                        return `<li class="list-view-event-item"><span class="${eventClass}">${event.text}</span></li>`;
+                        // XSS対策: テキストをエスケープ
+                        return `<li class="list-view-event-item"><span class="${eventClass}">${Utils.escapeHtml(event.text)}</span></li>`;
                     }).join('');
                     eventsHtml = `<ul class="list-view-day-events">${items}</ul>`;
                 } else {
@@ -777,34 +818,21 @@
                 this.dom.get('eventDate').textContent = holidayName ? `${dateStr} (${holidayName})` : dateStr;
 
                 this.dom.get('templateButtons').innerHTML = CONFIG.EVENT_TEMPLATES.map(template => 
-                    `<button class="template-btn">${template}</button>`
+                    `<button class="template-btn">${Utils.escapeHtml(template)}</button>`
                 ).join('');
 
                 const dayEvents = this.state.events[dateStr] || [];
-                this.dom.get('modalEventsList').innerHTML = dayEvents.length
-                    ? dayEvents.map(event => this._createEventLi(event, 'modal')).join('')
-                    : '<li>予定はありません</li>';
-
+                if (dayEvents.length === 0) {
+                    this.dom.get('modalEventsList').innerHTML = '<li>予定はありません</li>';
+                } else {
+                    this.dom.get('modalEventsList').innerHTML = dayEvents.map(event => this._createEventLi(event, 'modal')).join('');
+                }
                 this.dom.get('eventModal').style.display = 'flex';
             }
 
-            // ★★★ 変更点: 編集モードへの切り替え処理をRendererに移動 ★★★
-            switchToEditMode(textSpan) {
-                const li = textSpan.parentElement;
-                const eventId = li.dataset.eventId;
-                const input = document.createElement('input');
-                input.type = 'text';
-                input.className = 'event-input';
-                input.value = textSpan.textContent;
-                li.insertBefore(input, textSpan);
-                li.removeChild(textSpan);
-                input.focus();
-                const save = () => this.callbacks.editEvent(eventId, input.value);
-                input.addEventListener('blur', save, { once: true });
-                input.addEventListener('keypress', e => { if (e.key === 'Enter') input.blur(); });
-            }
-
             _createEventLi(event, context) {
+                // XSS対策: テキストをエスケープ
+                const safeText = Utils.escapeHtml(event.text);
                 const eventClass = this._getEventClass(event.text);
                 let handleHtml = (this.state.isDragModeEnabled || context === 'modal') ? `<span class="drag-handle">&#9776;</span>` : '';
                 let deleteBtnHtml = (context === 'modal') ? `<button class="delete-event" data-event-id="${event.id}">削除</button>` : '';
@@ -812,7 +840,7 @@
                 return `
                     <li data-event-id="${event.id}" class="${eventClass}">
                         ${handleHtml}
-                        <span class="event-text">${event.text}</span>
+                        <span class="event-text">${safeText}</span>
                         ${deleteBtnHtml}
                     </li>`;
             }
@@ -860,43 +888,74 @@
                 this.dom = new DOMManager();
                 this.api = new ApiService();
                 this.state = new UIState();
-                // ★★★ 変更点: Rendererにコールバックを渡す ★★★
-                this.renderer = new ViewRenderer(this.dom, this.state, {
-                    editEvent: (id, text) => this.editEvent(id, text)
-                });
+                this.renderer = new ViewRenderer(this.dom, this.state);
                 
                 this.saveTimeout = null;
                 this.statusClearTimeout = null;
+                this.touchStartX = 0;
+                this.touchEndX = 0;
                 this.modalSortable = null;
                 this.calendarSortableInstances = [];
             }
 
             async init() {
-                const [events, holidays] = await Promise.all([this.api.fetchEvents(), this.api.fetchHolidays()]);
-                this.state.events = events;
-                this.state.holidays = holidays;
-                this.state.listDate = new Date(this.state.calendarDate);
-                this.renderer.render();
-                this._bindEventListeners();
-                this._initializeModalSortable();
+                this._setSaveStatus('saving', 'データを読み込み中...');
+
+                try {
+                    const holidays = await this.api.fetchHolidays();
+                    this.state.holidays = holidays || {};
+                    
+                    // 現在のビューに合わせてデータを取得
+                    await this.loadEventsForCurrentView();
+
+                    this.renderer.render();
+                    this._bindEventListeners();
+                    this._initializeModalSortable();
+                    
+                    this._setSaveStatus('saved', '読み込み完了', 1000);
+                } catch (e) {
+                    console.error(e);
+                    this._setSaveStatus('error', '読み込みエラー');
+                }
             }
 
-            // ★★★ 変更点: イベントリスナー登録をメソッドに分割 ★★★
+            // 現在のビュー（カレンダー/リスト）に基づいて必要な期間を計算し、データを取得
+            async loadEventsForCurrentView() {
+                let startStr, endStr;
+                const formatDate = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+                if (this.state.isListViewEnabled) {
+                    // リスト表示: 表示中の週を取得
+                    const { monday, sunday } = this.renderer._getWeekRange(this.state.listDate);
+                    startStr = formatDate(monday);
+                    endStr = formatDate(sunday);
+                } else {
+                    // カレンダー表示: 前月20日〜翌月15日程度をカバー
+                    const date = this.state.calendarDate;
+                    const start = new Date(date.getFullYear(), date.getMonth() - 1, 20); 
+                    const end = new Date(date.getFullYear(), date.getMonth() + 1, 15);
+                    startStr = formatDate(start);
+                    endStr = formatDate(end);
+                }
+
+                this._setSaveStatus('saving', 'データ更新中...');
+
+                try {
+                    const newEvents = await this.api.fetchEvents(startStr, endStr);
+                    // 既存データにマージ
+                    this.state.events = { ...this.state.events, ...newEvents };
+                    this._setSaveStatus('saved', '完了', 500);
+                } catch (e) {
+                    console.error(e);
+                }
+            }
+
             _bindEventListeners() {
-                this._bindHeaderListeners();
-                this._bindViewListeners();
-                this._bindModalEventListeners();
-            }
-
-            _bindHeaderListeners() {
                 this.dom.get('prevMonthBtn').addEventListener('click', () => this.changePeriod(-1));
                 this.dom.get('nextMonthBtn').addEventListener('click', () => this.changePeriod(1));
                 this.dom.get('listViewToggle').addEventListener('click', () => this.toggleViewMode());
-                this.dom.get('printListBtn').addEventListener('click', () => this.printList());
-            }
-
-            _bindViewListeners() {
                 this.dom.get('dragModeToggle').addEventListener('click', () => this.toggleDragMode());
+                this.dom.get('printListBtn').addEventListener('click', () => this.printList());
 
                 this.dom.get('calendarBody').addEventListener('click', e => {
                     const cell = e.target.closest('td[data-date]');
@@ -909,6 +968,16 @@
                     const dayItem = e.target.closest('.list-view-day-item[data-date]');
                     if (dayItem) this.openModal(dayItem.dataset.date);
                 });
+
+                this.dom.get('listView').addEventListener('touchstart', e => this.touchStartX = e.changedTouches[0].screenX, false);
+                this.dom.get('listView').addEventListener('touchend', e => {
+                    this.touchEndX = e.changedTouches[0].screenX;
+                    if (Math.abs(this.touchStartX - this.touchEndX) > CONFIG.SWIPE_THRESHOLD) {
+                        this.changePeriod(this.touchEndX < this.touchStartX ? 1 : -1);
+                    }
+                }, false);
+
+                this._bindModalEventListeners();
             }
 
             _bindModalEventListeners() {
@@ -930,7 +999,7 @@
                     if (e.target.classList.contains('delete-event')) {
                         this.deleteEvent(e.target.dataset.eventId);
                     } else if (e.target.classList.contains('event-text')) {
-                        this.renderer.switchToEditMode(e.target);
+                        this._switchToEditMode(e.target);
                     }
                 });
             }
@@ -947,12 +1016,17 @@
             }
 
             changePeriod(direction) {
+                // 先に描画更新
                 this._renderOnly(() => {
                     if (this.state.isListViewEnabled) {
                         this.state.listDate.setDate(this.state.listDate.getDate() + (7 * direction));
                     } else {
                         this.state.calendarDate.setMonth(this.state.calendarDate.getMonth() + direction);
                     }
+                });
+                // 後からデータ取得
+                this.loadEventsForCurrentView().then(() => {
+                    this.renderer.render();
                 });
             }
 
@@ -966,6 +1040,10 @@
                     }
                     this.state.isListViewEnabled = !this.state.isListViewEnabled;
                 });
+                // ビュー切り替え後にデータ取得
+                this.loadEventsForCurrentView().then(() => {
+                    this.renderer.render();
+                });
             }
 
             toggleDragMode() {
@@ -974,14 +1052,9 @@
                 btn.textContent = this.state.isDragModeEnabled ? 'レイアウト編集を終了' : 'レイアウト編集を開始';
                 btn.classList.toggle('active', this.state.isDragModeEnabled);
                 this.dom.get('calendarContainer').classList.toggle('drag-mode-active', this.state.isDragModeEnabled);
-                
-                this._renderOnly(); // isDragModeEnabledの状態だけ変更して再描画
-
-                if (this.state.isDragModeEnabled) {
-                    this._initializeCalendarSortable();
-                } else {
-                    this._destroyCalendarSortable();
-                }
+                this.renderer.render();
+                if (this.state.isDragModeEnabled) this._initializeCalendarSortable();
+                else this._destroyCalendarSortable();
             }
 
             printList() {
@@ -1002,7 +1075,8 @@
                 const trimmedText = text.trim();
                 if (!trimmedText || !this.state.selectedDate) return;
                 this._updateDataAndRender(() => {
-                    const newEvent = { id: crypto.randomUUID(), text: trimmedText };
+                    // 互換性のあるUUID生成を使用
+                    const newEvent = { id: Utils.generateUUID(), text: trimmedText };
                     if (!this.state.events[this.state.selectedDate]) this.state.events[this.state.selectedDate] = [];
                     this.state.events[this.state.selectedDate].push(newEvent);
                 });
@@ -1023,10 +1097,25 @@
             editEvent(eventId, newText) {
                 const { selectedDate, events } = this.state;
                 const eventToEdit = events[selectedDate]?.find(event => event.id === eventId);
-                if (eventToEdit && eventToEdit.text !== newText.trim()) {
+                if (eventToEdit) {
                     this._updateDataAndRender(() => eventToEdit.text = newText.trim());
                 }
                 this.renderer.renderModal();
+            }
+
+            _switchToEditMode(textSpan) {
+                const li = textSpan.parentElement;
+                const eventId = li.dataset.eventId;
+                const input = document.createElement('input');
+                input.type = 'text';
+                input.className = 'event-input';
+                input.value = textSpan.textContent;
+                li.insertBefore(input, textSpan);
+                li.removeChild(textSpan);
+                input.focus();
+                const save = () => this.editEvent(eventId, input.value);
+                input.addEventListener('blur', save, { once: true });
+                input.addEventListener('keypress', e => { if (e.key === 'Enter') input.blur(); });
             }
 
             _setSaveStatus(status, message, autoClearDelay = null) {
