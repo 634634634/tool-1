@@ -26,7 +26,7 @@
             --event-miso-bg: #28a745;
             --event-natto-bg: #e0535d;
             --event-yasumi-bg: #8a63d2;
-            --event-default-bg: #e9c46a;
+            --event-default-bg: #d4a017; /* 視認性向上のため少し濃く */
         }
 
         /* --- 基本スタイル --- */
@@ -142,13 +142,14 @@
         .events-list li.event-natto, .list-view-event-item > span.event-natto { background-color: var(--event-natto-bg); }
         .events-list li.event-yasumi, .list-view-event-item > span.event-yasumi { background-color: var(--event-yasumi-bg); }
         .events-list li.event-default, .list-view-event-item > span.event-default {
-            background-color: var(--event-default-bg); color: var(--text-color);
+            background-color: var(--event-default-bg); color: var(--text-color-light);
         }
         /* リスト表示時の文字色調整 */
         .list-view-event-item > span.event-shoyu,
         .list-view-event-item > span.event-miso,
         .list-view-event-item > span.event-natto,
-        .list-view-event-item > span.event-yasumi { color: var(--text-color-light); }
+        .list-view-event-item > span.event-yasumi,
+        .list-view-event-item > span.event-default { color: var(--text-color-light); }
 
         .drag-handle {
             cursor: grab; margin-right: 8px; opacity: 0.3; transition: opacity 0.2s;
@@ -375,8 +376,8 @@
         const CONSTANTS = {
             EVENT_TEMPLATES: ["【醤油】", "【味噌】", "【納豆】", "【休み】"],
             API_URLS: {
-                // ※ご自身のGASのURLに置き換えてください
-                GAS: 'https://script.google.com/macros/s/AKfycbzcSOhbNLNnxuLsgYaUOeiCj5UkGXrF_Z_Wzcio-zLrRKDEZFfE_553lsq3AFNyaphX/exec',
+                // ★ここにデプロイしたGASのURLを貼り付けてください★
+                GAS: 'https://script.google.com/macros/s/AKfycbxU8VCxCv524lCe4JHLd8KSMrC8U5Vy8GsfhaXiidT36YxAzbVo-Ik4u51cKK0ww1CV/exec',
                 HOLIDAYS: 'https://holidays-jp.github.io/api/v1/date.json',
             },
             SWIPE_THRESHOLD: 50,
@@ -394,12 +395,10 @@
 
         // --- ユーティリティ ---
         const Utils = {
-            // XSS対策: HTMLエスケープ
             escapeHtml: (str) => {
                 if (typeof str !== 'string') return str;
                 return str.replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[m]));
             },
-            // UUID生成 (フォールバック付き)
             generateUUID: () => {
                 if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
                 return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
@@ -407,7 +406,6 @@
                     return v.toString(16);
                 });
             },
-            // 日付フォーマット (YYYY-MM-DD)
             formatDate: (date) => {
                 return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
             }
@@ -449,10 +447,15 @@
                 });
             }
 
-            saveEvents(events) {
+            // 修正: 範囲(range)も送信し、no-corsを削除
+            saveEvents(events, range) {
                 return fetch(CONSTANTS.API_URLS.GAS, {
-                    method: 'POST', mode: 'no-cors', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                    body: JSON.stringify({ events }),
+                    method: 'POST',
+                    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                    body: JSON.stringify({ events, range }),
+                }).then(response => {
+                    if (!response.ok) throw new Error(`Server error: ${response.status}`);
+                    return response.json();
                 }).catch(error => {
                     console.error('Error saving events:', error);
                     alert('データの保存中にエラーが発生しました。');
@@ -472,22 +475,32 @@
                 this.selectedDate = null;
                 this.isDragModeEnabled = false;
                 this.isListViewEnabled = false;
-                this.editingEvents = []; // モーダル編集用の一時データ
+                this.editingEvents = [];
+                // 追加: 現在表示中のデータ範囲
+                this.currentRange = { start: null, end: null };
             }
 
-            // イベントデータのマージ
             mergeEvents(newEvents) {
                 this.events = { ...this.events, ...newEvents };
             }
 
-            // 編集開始 (ディープコピーを作成)
+            // 追加: 指定範囲内のイベントだけを抽出
+            getEventsInRange(start, end) {
+                const filtered = {};
+                Object.keys(this.events).forEach(date => {
+                    if (date >= start && date <= end) {
+                        filtered[date] = this.events[date];
+                    }
+                });
+                return filtered;
+            }
+
             startEditing(dateStr) {
                 this.selectedDate = dateStr;
                 const originalEvents = this.events[dateStr] || [];
                 this.editingEvents = JSON.parse(JSON.stringify(originalEvents));
             }
 
-            // 編集内容のコミット (一時データを正式データに反映)
             commitEditing() {
                 if (!this.selectedDate) return;
                 if (this.editingEvents.length === 0) {
@@ -497,19 +510,16 @@
                 }
             }
 
-            // 編集の破棄
             cancelEditing() {
                 this.editingEvents = [];
             }
 
-            // 変更があるかチェック
             hasUnsavedChanges() {
                 if (!this.selectedDate) return false;
                 const original = this.events[this.selectedDate] || [];
                 return JSON.stringify(original) !== JSON.stringify(this.editingEvents);
             }
 
-            // 一時データへの操作
             addEditingEvent(text) {
                 this.editingEvents.push({ id: Utils.generateUUID(), text: text });
             }
@@ -737,6 +747,9 @@
                     endStr = Utils.formatDate(end);
                 }
 
+                // 修正: 現在の範囲をStoreに保存
+                this.store.currentRange = { start: startStr, end: endStr };
+
                 this._setSaveStatus('saving', 'データ更新中...');
                 try {
                     const newEvents = await this.api.fetchEvents(startStr, endStr);
@@ -896,7 +909,13 @@
                 this._setSaveStatus('saving', '保存中...');
                 this.saveTimeout = setTimeout(async () => {
                     try {
-                        await this.api.saveEvents(this.store.events);
+                        // 修正: 範囲内のデータだけを抽出して送信
+                        const range = this.store.currentRange;
+                        if (!range.start || !range.end) return;
+
+                        const eventsToSend = this.store.getEventsInRange(range.start, range.end);
+                        await this.api.saveEvents(eventsToSend, range);
+                        
                         this._setSaveStatus('saved', '✓ 保存済み', 2000);
                     } catch (e) {
                         this._setSaveStatus('error', '保存に失敗しました');
@@ -916,18 +935,19 @@
                             const eventId = item.dataset.eventId;
                             const text = item.querySelector('.event-text').textContent;
 
-                            // ストアのデータを直接操作
-                            const oldEvents = this.store.events[oldDate] || [];
-                            const newEvents = (oldDate === newDate) ? oldEvents : (this.store.events[newDate] || []);
-                            
-                            // 移動元から削除
-                            const eventIndex = oldEvents.findIndex(e => e.id === eventId);
-                            if (eventIndex > -1) oldEvents.splice(eventIndex, 1);
-                            if (oldEvents.length === 0) delete this.store.events[oldDate];
+                            // 修正: 安全なデータ操作
+                            const sourceList = [...(this.store.events[oldDate] || [])];
+                            const targetList = (oldDate === newDate) ? sourceList : [...(this.store.events[newDate] || [])];
 
-                            // 移動先へ追加
-                            if (!this.store.events[newDate]) this.store.events[newDate] = newEvents;
-                            newEvents.splice(newIndex, 0, { id: eventId, text: text });
+                            const eventIndex = sourceList.findIndex(e => e.id === eventId);
+                            if (eventIndex > -1) sourceList.splice(eventIndex, 1);
+
+                            targetList.splice(newIndex, 0, { id: eventId, text: text });
+
+                            if (sourceList.length === 0) delete this.store.events[oldDate];
+                            else this.store.events[oldDate] = sourceList;
+                            
+                            this.store.events[newDate] = targetList;
 
                             this.renderer.render();
                             this._debouncedSave();
